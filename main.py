@@ -1,10 +1,10 @@
 from __future__ import division 
 from sklearn.cluster import KMeans
 from clarifai.client import ClarifaiApi
-
 import dropbox
 import numpy as np
-import os
+import os, collections, operator, dropbox, math
+
 
 surya_access_token = "Y-HjafV0lKEAAAAAAAAlcFwacpgYDO_Ouf_KZ0SrHFZTYPqa5eK1kZvW2KaQ0fOw" 
 client = dropbox.client.DropboxClient(surya_access_token)
@@ -209,10 +209,62 @@ def semisupervised_clustering(dir_of_folders, dir_of_images):
     
     return clustered_assignments
 
-print "Welcome to Mirage!"
-clarifai_api = ClarifaiApi() 
-vectorized_images = get_images(client, images_folder)
-c, ca, sd = k_means(vectorized_images, 5)
+def cosine_distance(v1,v2):
+    "compute cosine distance of v1 to v2: (v1 dot v2)/{||v1||*||v2||)"
+    sumxx, sumxy, sumyy = 0, 0, 0
+    for i in range(len(v1)):
+        x = v1[i]; y = v2[i]
+        sumxx += x*x
+        sumyy += y*y
+        sumxy += x*y
+    return sumxy/math.sqrt(sumxx*sumyy)
 
-#clustered_images = cluster_up_images(vectorized_images, ca, 5) 
-#insert_clustered_images(clustered_images)
+def semisupervised_clustering(dir_of_folders, dir_of_images):
+    average_image_reps = []
+    metadata_big = client.metadata(dir_of_folders)
+    folders_data = metadata_big["contents"]
+    
+    for folder in folders_data:
+        cluster_vectorized_images = get_images(client, folder["path"])
+        all_vectorized_images = [i["data"] for i in cluster_vectorized_images]
+        average_vectorized_images = [sum(i)/len(i) for i in zip(*all_vectorized_images)]
+        average_image_reps.append({'folder_id': folder["path"], 'reps': average_vectorized_images})
+    
+    vectorized_images = get_images(client, dir_of_images) 
+    clustered_assignments = collections.defaultdict(list)
+    
+    for image in vectorized_images:
+        image_name = image['id']
+        image_rep = image['data']
+        image_cluster = None
+        max_distance = 0
+        for cluster in average_image_reps:
+            cluster_name = cluster['folder_id'] 
+            cluster_rep = cluster['reps']
+            similarity = cosine_distance(image_rep, cluster_rep)
+            if similarity >= max_distance:
+                image_cluster = cluster_name
+                max_distance = similarity
+            print similarity, cluster_name, image_name
+        clustered_assignments[image_cluster].append(image)
+    
+    return clustered_assignments
+
+def insert_new_images(client, clustered_assignments):
+    items = clustered_assignments.keys()
+    for item in items:
+        for elt in clustered_assignments[item]:
+            client.file_copy(elt['id'], item + "/" + elt['id'][elt['id'].rfind("/")+1:])
+
+print "Welcome to Mirage!"
+clarifai_api = ClarifaiApi()
+# vectorized_images = get_images(client, images_folder)
+# c, ca, sd = k_means(vectorized_images, 5)
+# print ca
+# clustered_images = cluster_up_images(vectorized_images, ca, 5)
+# insert_clustered_images(clustered_images)
+vec_imgs = semisupervised_clustering("clusters/", "sample_photos_new/") 
+for i in vec_imgs.items():
+    print i
+insert_new_images(client, vec_imgs)
+
