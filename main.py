@@ -3,7 +3,7 @@ from sklearn.cluster import KMeans
 from clarifai.client import ClarifaiApi
 import dropbox
 import numpy as np
-import os, collections, operator, dropbox, math
+import os, collections, operator, dropbox, math, time
 
 
 surya_access_token = "Y-HjafV0lKEAAAAAAAAlcFwacpgYDO_Ouf_KZ0SrHFZTYPqa5eK1kZvW2KaQ0fOw" 
@@ -11,16 +11,6 @@ client = dropbox.client.DropboxClient(surya_access_token)
 images_folder = "/sample_photos_copy"
 
 def get_images(client, images_folder):
-    """
-    Given an images-folder name returns all the images in <128x128?> format. 
-    
-    Params:
-        client: object, owner of the dropbox acc we are hacking.
-        images_folder: string, name of the folder containing the images 
-                       (must be in home page, for now)
-    Return:
-        images: list containing JPEG images in the desired format.
-    """
     metadata = client.metadata(images_folder)
     vectorized_images = []
     images_data = metadata["contents"] #list, each item contains data of an image. "path" contains the image path/name
@@ -51,12 +41,12 @@ def k_means(vectorized_images, k):
         sum_distances: sum of distances from each element to its center, helps us know how good the k-means did.
     """
     data = map(lambda image_dic: image_dic["data"], vectorized_images)
-    alg = KMeans(n_clusters=i)
+    alg = KMeans(n_clusters=k)
     alg.fit(data)
     centroids = alg.cluster_centers_
     cluster_assignments = alg.labels_ 
     sum_distances = alg.inertia_ 
-    clustered_images = cluster_up_images(vectorized_images, cluster_assignments, i)
+    clustered_images = cluster_up_images(vectorized_images, cluster_assignments, k)
     #print'dunn index, k,', i, (get_dunn_index(map(lambda cluster: np.asarray([image["data"] for image in cluster]), clustered_images)))
     return centroids, cluster_assignments, sum_distances
     
@@ -123,37 +113,36 @@ def cluster_up_images (vectorized_images, cluster_assignments, k):
     return clustered_images
 
 def get_top_tags(folder_path):
-    '''
-    Param:
-            folder_path: path to the folder containing images
-    Return:
-            top_tags: list of top three tags for all of the images in a folder using Clarfai API
-
-    '''
+    metadata = client.metadata(folder_path)
     top_tags = collections.defaultdict(float)
-    for (_, _, filenames) in walk(folder_path):
-        for filename in filenames:
-            try:
-                result = clarifai_api.tag_images(open(folder_path + "/" + filename))
+    images_data = metadata["contents"]
+
+    for image in images_data:
+        file_name = image["path"]
+        data = client.get_file(image["path"]).read()
+
+        try:
+            with open("output.png", 'w+') as f:
+                f.write(data)
+                result = clarifai_api.tag_images(f)
                 top_ten_tag = result['results'][0]['result']['tag']['classes'][:10]
                 top_ten_prob = result['results'][0]['result']['tag']['probs'][:10]
-                for tag,prob in zip(top_ten_tag, top_ten_prob): 
+                for tag,prob in zip(top_ten_tag, top_ten_prob):
                     top_tags[tag] += prob
-            except: 
-                pass
+        except:
+            pass
     sorted_tags = sorted(top_tags.items(), key=operator.itemgetter(1))[::-1]
     return [tag[0] for tag in sorted_tags[:3]]
-
-# for i, image in enumerate(get_images(client, "sample_photos")):
-#        client.put_file("/sample_photos/"+str(i), image.read())
 
 def insert_clustered_images(clustered_images):
     for index in range(len(clustered_images)):
         images = clustered_images[index]
-        client.file_create_folder("clusters/" + str(index))
+        folder_path = "clusters/" + str(index)
+        client.file_create_folder(folder_path)
         for image in images:
             client.file_copy(image["id"], "clusters/" + str(index) + "/" + image["id"][image["id"].rfind('/')+1:])
-
+        print get_top_tags(folder_path)
+        client.file_move("clusters/" + str(index), "clusters/" + '_'.join(get_top_tags(folder_path)))
 
 def cosine_distance(v1,v2):
     "compute cosine distance of v1 to v2: (v1 dot v2)/{||v1||*||v2||)"
@@ -246,7 +235,8 @@ def semisupervised_clustering(dir_of_folders, dir_of_images):
                 image_cluster = cluster_name
                 max_distance = similarity
             print similarity, cluster_name, image_name
-        clustered_assignments[image_cluster].append(image)
+        if max_distance > 0.4:
+            clustered_assignments[image_cluster].append(image)
     
     return clustered_assignments
 
@@ -254,17 +244,28 @@ def insert_new_images(client, clustered_assignments):
     items = clustered_assignments.keys()
     for item in items:
         for elt in clustered_assignments[item]:
-            client.file_copy(elt['id'], item + "/" + elt['id'][elt['id'].rfind("/")+1:])
+            client.file_move(elt['id'], item + "/" + elt['id'][elt['id'].rfind("/")+1:])
 
 print "Welcome to Mirage!"
 clarifai_api = ClarifaiApi()
-# vectorized_images = get_images(client, images_folder)
-# c, ca, sd = k_means(vectorized_images, 5)
-# print ca
-# clustered_images = cluster_up_images(vectorized_images, ca, 5)
-# insert_clustered_images(clustered_images)
+vectorized_images = get_images(client, images_folder)
+c, ca, sd = k_means(vectorized_images, 5)
+print ca
+clustered_images = cluster_up_images(vectorized_images, ca, 5)
+insert_clustered_images(clustered_images)
+
 vec_imgs = semisupervised_clustering("clusters/", "sample_photos_new/") 
 for i in vec_imgs.items():
     print i
 insert_new_images(client, vec_imgs)
+
+time.sleep(5)
+
+if len(client.metadata("sample_photos_new/")["contents"]) != 0:
+    vectorized_images = get_images(client, "sample_photos_new/")
+    c, ca, sd = k_means(vectorized_images, 2)
+    print ca
+    clustered_images = cluster_up_images(vectorized_images, ca, 2)
+    insert_clustered_images(clustered_images)
+
 
