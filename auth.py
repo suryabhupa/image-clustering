@@ -20,8 +20,8 @@ Tasks:
     done. GG, self-driving car, OMW.
 """
 
-fernando_code = "G3WiFPJ4iY4AAAAAAAADvvfxJvgjFgNuWO5cBTxxorg"
-surya_code = "Y-HjafV0lKEAAAAAAAAlXhMIsKw7bnRcwyT3rQAfvws"
+fernando_code = "insert_code_here"
+surya_code = "insert_code_here"
 surya_image_folder = "sample_photos"
 K = 10 # sample
 
@@ -49,8 +49,8 @@ def authenticate(code):
         client: the object of the acc that the code points to.
     """
     
-    app_key = '71zx3gb8sya25eh'
-    app_secret = '2t0fjsfqk7c55cx'
+    app_key = 'app_key'
+    app_secret = 'app_secret'
     flow = dropbox.client.DropboxOAuth2FlowNoRedirect(app_key, app_secret)
     print flow
     access_token, user_id = flow.finish(code)
